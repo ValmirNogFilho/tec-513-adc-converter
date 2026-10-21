@@ -19,7 +19,7 @@ plt.ion()
 fig, ax = plt.subplots(figsize=(10, 5))
 linha, = ax.plot(np.zeros(tamanho_buffer), color='blue', linewidth=1.5)
 
-ax.set_ylim(-10, 260)
+ax.set_ylim(-0.2, 5.2)
 ax.set_xlabel('Amostras (0 a 1023)')
 ax.set_ylabel('Tensão (V)')
 ax.set_title('Leitura em Tempo Real via Handshake - ATmega2560')
@@ -50,7 +50,7 @@ try:
         tensao = (dados * 5.0) / 256.0
 
         # Atualiza o gráfico
-        linha.set_ydata(dados)
+        linha.set_ydata(tensao)
         plt.draw()
         plt.pause(0.01)
 
