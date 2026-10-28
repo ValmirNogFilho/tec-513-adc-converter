@@ -47,6 +47,13 @@ try:
 
         # Converte os dados brutos de 8 bits (0-255) para Tensão (0-5V)
         dados = np.frombuffer(dados_brutos, dtype=np.uint8)
+
+        # Trigger: começa o gráfico onde a onda cruza o meio da escala subindo
+        i = np.arange(10, tamanho_buffer - 11)
+        subida = i[(dados[i] < 128) & (dados[i + 1] >= 128) & (dados[i + 10] > dados[i - 10])]
+        if len(subida) > 0:
+            dados = np.roll(dados, -subida[0])
+
         tensao = (dados * 5.0) / 256.0
 
         # Atualiza o gráfico
