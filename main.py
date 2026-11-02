@@ -3,61 +3,87 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
-porta_serial = 'COM9'  # Ajuste para a sua porta (ex: 'COM3', 'COM4' ou '/dev/ttyACM0')
+porta_serial = 'COM5'  # Ajuste para a sua porta
 baud_rate = 115200
-tamanho_buffer = 1024
+tamanho_buffer = 4096
+
+nivel_trigger = 0   # Meio da escala (em 8 bits, 0-255)
+tamanho_janela = 1024  # Quantidade de pontos que vai aparecer na tela
+# NOVA CONFIGURAÇÃO DO TRIGGER
+margem_busca = tamanho_buffer - tamanho_janela  
+
+fs = 16e6 / 16 / 13    # Clock de 16 MHz, prescaler 16, 13 ciclos por conversão
+f_tri = 150.2          # Frequência configurada no gerador
 
 print("Conectando à porta e aguardando inicialização do Arduino...")
 ser = serial.Serial(porta_serial, baud_rate, timeout=3)
-
-# Aguarda 3 segundos para garantir que o bootloader do Arduino concluiu o reset
 time.sleep(3)
 ser.reset_input_buffer()
 
 # Configura o gráfico
 plt.ion()
 fig, ax = plt.subplots(figsize=(10, 5))
-linha, = ax.plot(np.zeros(tamanho_buffer), color='blue', linewidth=1.5)
+# Agora a linha tem o tamanho da janela (800) e não do buffer inteiro (1024)
+linha, = ax.plot(np.zeros(tamanho_janela), color='blue', linewidth=1.5, label='Arduino')
 
-ax.set_ylim(-0.2, 5.2)
-ax.set_xlabel('Amostras (0 a 1023)')
+# Triangular ideal começando no vale, igual ao ponto do trigger
+n = np.arange(tamanho_janela)
+ideal = 255 * (1 - np.abs(2 * ((f_tri * n / fs) % 1) - 1))
+ax.plot(n, ideal, color='red', linestyle='--', linewidth=1, label='Ideal')
+ax.legend(loc='upper right')
+
+ax.set_ylim(-0.2, 256)
+ax.set_xlim(0, tamanho_janela) # Trava o eixo X no tamanho da janela
+ax.set_xlabel(f'Amostras (0 a {tamanho_janela-1})')
 ax.set_ylabel('Tensão (V)')
-ax.set_title('Leitura em Tempo Real via Handshake - ATmega2560')
+ax.set_title('Osciloscópio - Modo Auto (Gatilho em 2.5V)')
 ax.grid(True)
 
 print("Sincronizado! Solicitando dados ao Arduino...")
+capturas = []
 
 try:
     while plt.fignum_exists(fig.number):
-        # Limpa resíduos antigos do buffer de entrada
         ser.reset_input_buffer()
-        
-        # Envia a solicitação 'S' e FORÇA o envio imediato pela USB
         ser.write(b'S')
         ser.flush()
 
-        # Lê os 1024 bytes do Arduino
         dados_brutos = ser.read(tamanho_buffer)
 
-        # Checagem de diagnóstico
         if len(dados_brutos) < tamanho_buffer:
-            print(f"Aviso: Recebeu {len(dados_brutos)} bytes de {tamanho_buffer}. Aguardando próximo ciclo...")
+            print(f"Aviso: Recebeu {len(dados_brutos)} bytes. Aguardando...")
             time.sleep(0.1)
             continue
 
-        # Converte os dados brutos de 8 bits (0-255) para Tensão (0-5V)
         dados = np.frombuffer(dados_brutos, dtype=np.uint8)
 
-        # Trigger: começa o gráfico onde a onda cruza o meio da escala subindo
-        i = np.arange(10, tamanho_buffer - 11)
-        subida = i[(dados[i] < 128) & (dados[i + 1] >= 128) & (dados[i + 10] > dados[i - 10])]
-        if len(subida) > 0:
-            dados = np.roll(dados, -subida[0])
+        # Salva os últimos 50 blocos recebidos para o analise.py
+        capturas.append(dados)
+        np.save(f'captura_{f_tri:g}Hz.npy', np.array(capturas[-50:]))
 
-        tensao = (dados * 5.0) / 256.0
+        # --- LÓGICA DO TRIGGER (MODO AUTO) ---
+        # Pega apenas a margem inicial para procurar a borda de subida
+        area_busca = dados[:margem_busca]
+        
+        # Procura onde o ponto anterior é menor que 128 e o atual é maior ou igual
+        cruzamentos = np.where((area_busca[:-1] <= nivel_trigger) & (area_busca[1:] >= nivel_trigger))[0]
+
+        if len(cruzamentos) > 0:
+            # Encontrou o trigger! O índice é o primeiro cruzamento (+1 por causa do offset do array)
+            indice_trigger = cruzamentos[0] + 1
+        else:
+            # MODO AUTO: Não encontrou o cruzamento (pode ser uma linha reta ou sinal muito fraco)
+            # Desenha a partir do zero de qualquer forma para a tela não congelar
+            indice_trigger = 0 
+
+        # Corta a janela exata de dados contínuos a partir do trigger
+        dados_janela = dados[indice_trigger : indice_trigger + tamanho_janela]
+
+        # Converte para tensão
+        tensao = (dados_janela * 5.0) / 256.0
 
         # Atualiza o gráfico
-        linha.set_ydata(tensao)
+        linha.set_ydata(dados_janela)
         plt.draw()
         plt.pause(0.01)
 
