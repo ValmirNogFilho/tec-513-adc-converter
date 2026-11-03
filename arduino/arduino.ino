@@ -1,7 +1,7 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 4096
 
 volatile uint8_t buffer[BUFFER_SIZE];
 volatile uint16_t index_buffer = 0;
