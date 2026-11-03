@@ -3,7 +3,7 @@
 # Fluxo de uso:
 #   1. Rodar o main.py com a triangular ligada; ele salva os últimos 50 blocos em
 #      captura_<f_tri>Hz.npy.
-#   2. Preencher os parâmetros abaixo com o que foi usado/medido no laboratório.
+#   2. Conferir no config.py os parâmetros usados/medidos no laboratório.
 #   3. Rodar este script: ele imprime a comparação medido x datasheet e abre 5 gráficos.
 #
 # Abreviações das fontes:
@@ -17,25 +17,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# ---------- Parâmetros (preencher no laboratório) ----------
-arquivo = 'captura_150.2Hz.npy'  # Arquivo salvo pelo main.py
-f_tri = 150.2                    # Frequência configurada no gerador (Hz)
+# ---------- Parâmetros: vêm do config.py (f_tri, v_min, v_max, vref, fs_nominal, n_bits) ----------
+from config import f_tri, v_min, v_max, vref, fs_nominal, n_bits
 
-# Mínimo e máximo da triangular. Com o gerador em HighZ, o valor da tela é a tensão
-# que chega no pino (anotação do lab de 21/10): 5,020 Vpp com offset de 2,520 V.
-v_min = 2.520 - 5.020 / 2        # Offset - Vpp/2
-v_max = 2.520 + 5.020 / 2        # Offset + Vpp/2
-
-# Vref = AVCC, porque o código usa REFS0 = 1 (DS Tab. 26-3, p. 281). Na placa ligada
-# pela USB, AVCC são os 5 V do notebook, que variam de um notebook para outro.
-vref = 5.0                       # MEDIR com o multímetro no pino 5V da placa
-
-# Lemos só o ADCH com ADLAR = 1, ou seja, os 8 bits de cima (DS p. 286).
-n_bits = 8
-
-# Taxa de amostragem nominal: clock de 16 MHz ÷ prescaler 16 = 1 MHz no ADC (DS Tab. 26-5,
-# p. 285), e cada conversão leva 13 ciclos (DS p. 271): 1 MHz / 13 = 76 923 amostras/s.
-fs_nominal = 16e6 / 16 / 13
+arquivo = f'captura_{f_tri:g}Hz.npy'  # O mesmo nome que o main.py usa para salvar
 
 q = vref / 2**n_bits             # 1 LSB em volts: Vref / 2^n (DS p. 277: "2^n steps (LSBs)")
 codigos = np.arange(2**n_bits)   # Códigos possíveis: 0 a 255
@@ -288,7 +273,7 @@ fim = min(N, int(2 * periodo))   # Mostra 2 períodos
 
 # Gráfico 1: comparação no tempo (produto do EN). A escada (step) é a reconstrução por
 # retentor de ordem zero, que é o que o ADC entrega.
-fig1, (a1, a2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+fig1, (a1, a2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, num='1 - Comparação no tempo')
 a1.step(t[:fim], dados[:fim] * q, where='post', label='ADC (medido)')
 a1.plot(t[:fim], v_sim[:fim], 'r--', label='Triangular simulada')
 a1.set_ylabel('Tensão (V)')
@@ -302,7 +287,7 @@ a2.grid(True)
 
 # Gráfico 2: curva de quantização real x ideal (EN, produto: "comparação entre as curvas de
 # quantização real e ideal"). Cada ponto é (tensão simulada, código medido).
-fig2, ax = plt.subplots(figsize=(8, 7))
+fig2, ax = plt.subplots(figsize=(8, 7), num='2 - Curva de quantização')
 xx = np.linspace(0, 2**n_bits, 5000)
 ax.plot(x, dados, '.', markersize=2, label='Real (medido × simulado)')
 ax.step(xx, np.clip(np.floor(xx + 0.125), 0, 2**n_bits - 1), 'r', where='post', linewidth=0.8, label='Ideal')
@@ -314,7 +299,7 @@ ax.grid(True)
 
 # Gráfico 3: DNL e INL por código (como as Figs. 26-13 e 26-14 do DS, p. 279).
 # A linha em -1 marca código perdido (AVR127 §3.4.3).
-fig3, (b1, b2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+fig3, (b1, b2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, num='3 - DNL e INL')
 b1.bar(codigos[1:-1], dnl, width=1.0)
 b1.axhline(-1, color='r', linestyle='--', linewidth=1)
 b1.set_ylabel('DNL (LSB)')
@@ -325,7 +310,7 @@ b2.set_ylabel('INL (LSB)')
 b2.grid(True)
 
 # Gráfico 5: os outros erros estáticos.
-fig5, ((c1, c2), (c3, c4)) = plt.subplots(2, 2, figsize=(12, 8))
+fig5, ((c1, c2), (c3, c4)) = plt.subplots(2, 2, figsize=(12, 8), num='5 - Erros estáticos')
 fig5.suptitle('Erros estáticos')
 degrau_y = np.r_[codigos, codigos[-1]]   # Escada: sobe 1 código em cada transição
 
@@ -374,7 +359,7 @@ fig5.tight_layout()
 # Gráfico 4: comparação na frequência. A triangular ideal tem só harmônicas ímpares, que
 # caem com 1/n² (Lathi Ex. 6.2, p. 538); harmônicas pares ou extras no medido indicam
 # não linearidade (AVR127 §4.2). O "chão" do medido é o ruído (o mesmo da SINAD).
-fig4, ax = plt.subplots(figsize=(10, 5))
+fig4, ax = plt.subplots(figsize=(10, 5), num='4 - Comparação na frequência')
 ax.plot(freq, 20 * np.log10(X_med / ref + 1e-12), label='Medido')
 ax.plot(freq, 20 * np.log10(X_ideal / ref + 1e-12), 'r--', label='Triangular simulada')
 ax.set_xlim(0, min(fs_medida / 2, 40 * f_tri))

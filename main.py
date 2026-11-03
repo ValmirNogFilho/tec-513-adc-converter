@@ -12,8 +12,8 @@ tamanho_janela = 1024  # Quantidade de pontos que vai aparecer na tela
 # NOVA CONFIGURAÇÃO DO TRIGGER
 margem_busca = tamanho_buffer - tamanho_janela  
 
-fs = 16e6 / 16 / 13    # Clock de 16 MHz, prescaler 16, 13 ciclos por conversão
-f_tri = 150.2          # Frequência configurada no gerador
+from config import f_tri, fs_nominal as fs   # Frequência do gerador e fs: mudar só no config.py
+from ao_vivo import resumo                     # Erros calculados durante a captura
 
 print("Conectando à porta e aguardando inicialização do Arduino...")
 ser = serial.Serial(porta_serial, baud_rate, timeout=3)
@@ -60,6 +60,13 @@ try:
         # Salva os últimos 50 blocos recebidos para o analise.py
         capturas.append(dados)
         np.save(f'captura_{f_tri:g}Hz.npy', np.array(capturas[-50:]))
+
+        # Requisito 2 ao vivo: quantos dos 256 códigos apareceram neste bloco
+        ax.set_title(f'Osciloscópio | f_tri = {f_tri:g} Hz | este bloco: {len(np.unique(dados))}/256 códigos')
+
+        # A cada 10 blocos, os erros estáticos somando os blocos até agora
+        if len(capturas) % 10 == 0:
+            print(f"recebidos {len(capturas)} | usando os últimos " + resumo(capturas[-50:]))
 
         # --- LÓGICA DO TRIGGER (MODO AUTO) ---
         # Pega apenas a margem inicial para procurar a borda de subida
