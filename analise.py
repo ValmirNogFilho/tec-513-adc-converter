@@ -251,6 +251,19 @@ X_ideal = np.abs(np.fft.rfft(x[:M] - x[:M].mean()))
 X_quant = np.sqrt(M / 12)
 ref = X_ideal.max()             # 0 dB = fundamental da triangular simulada
 
+# FFT complexa para a fase. Começa no 1º cruzamento do meio da escala subindo (como o
+# gatilho do osciloscópio), e não no começo do bloco: a fase depende de onde o trecho começa
+# (deslocar no tempo muda a fase: Lathi eq. 8.33, p. 714), e assim ela fica num ponto fixo da
+# onda. A partir desse ponto a triangular é uma soma de senos com sinais alternados, então a
+# fase esperada nas ímpares é -90°, +90°, -90°... [nossa, a partir do Lathi Ex. 6.2]
+subidas0 = instantes(dados, True)
+i0 = int(round(subidas0[0])) if len(subidas0) else 0
+n_periodos_f = max(1, int((N - i0) // periodo))
+trecho_med = dados[i0:i0 + int(round(n_periodos_f * periodo))]
+trecho_ide = x[i0:i0 + len(trecho_med)]
+F_med = np.fft.rfft(trecho_med - trecho_med.mean())
+F_ide = np.fft.rfft(trecho_ide - trecho_ide.mean())
+
 
 # ---------- 9. Resultados: medido x datasheet ----------
 def linha(nome, medido, referencia, fonte):
@@ -457,18 +470,50 @@ k_h = h * n_periodos
 med_lin = X_med[k_h] / ref
 ide_lin = X_ideal[k_h] / ref
 
-fig7, ax7 = plt.subplots(figsize=(10, 5), num='7 - Espectro discreto (harmônicas)')
+fig7, (ax7, ax7f) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, num='7 - Espectro discreto (módulo e fase)')
 ax7.stem(h * f_tri, med_lin, basefmt=' ', label='Medido')
 ax7.plot(h * f_tri, ide_lin, 'rx', markersize=9, mew=2, label='Triangular simulada')
 ax7.axhline(X_quant / ref, color='gray', linestyle=':', linewidth=1.5, label='Chão teórico da quantização (8 bits)')
-ax7.set_xticks(h * f_tri)
-ax7.set_xticklabels([f'{v}f' for v in h], fontsize=8)
 ax7.set_ylim(0, 1.05)
-ax7.set_xlabel(f'Harmônica (f = {f_tri:g} Hz)')
 ax7.set_ylabel('Amplitude (relativa à fundamental)')
 ax7.set_title('Espectro discreto: altura de cada harmônica')
 ax7.legend()
 ax7.grid(True)
+
+# Fase só nas ímpares: nas pares o módulo ideal é ~0 e a fase não tem sentido
+h_imp = h[(h % 2 == 1) & (h * n_periodos_f < len(F_med))]
+fase_med = np.degrees(np.angle(F_med[h_imp * n_periodos_f]))
+fase_ide = np.degrees(np.angle(F_ide[h_imp * n_periodos_f]))
+ax7f.stem(h_imp * f_tri, fase_med, basefmt=' ', label='Medido')
+ax7f.plot(h_imp * f_tri, fase_ide, 'rx', markersize=9, mew=2, label='Triangular simulada')
+ax7f.set_ylim(-200, 200)
+ax7f.set_yticks([-180, -90, 0, 90, 180])
+ax7f.set_xticks(h * f_tri)
+ax7f.set_xticklabels([f'{v}f' for v in h], fontsize=8)
+ax7f.set_xlabel(f'Harmônica (f = {f_tri:g} Hz)')
+ax7f.set_ylabel('Fase (graus)')
+ax7f.set_title('Fase das harmônicas ímpares (a partir do meio da escala, subindo)')
+ax7f.legend()
+ax7f.grid(True)
+fig7.tight_layout()
+
+# Gráfico 9: só a triangular ideal na frequência, em hastes. Série de Fourier da triangular
+# (Lathi Ex. 6.2, p. 538): só harmônicas ímpares, com amplitude 1/h²; a triangular é a
+# integral da onda quadrada, que cai com 1/h (Oppenheim Ex. 3.7, p. 122).
+fig9, ax9 = plt.subplots(figsize=(10, 5), num='9 - Triangular ideal na frequência')
+ax9.stem(h, ide_lin, linefmt='r-', markerfmt='ro', basefmt=' ', label='FFT da triangular simulada')
+h_teo = h[h % 2 == 1]
+ax9.plot(h_teo, 1 / h_teo**2, 'kx', markersize=9, mew=2, label='Teoria: 1/h² (só ímpares)')
+for v in h_teo[:4]:
+    ax9.annotate(f'1/{v * v}' if v > 1 else '1', (v, 1 / v**2), textcoords='offset points', xytext=(8, 4))
+ax9.set_xticks(h)
+ax9.set_xticklabels([f'{v}f' for v in h], fontsize=8)
+ax9.set_ylim(0, 1.1)
+ax9.set_xlabel(f'Harmônica (f = {f_tri:g} Hz)')
+ax9.set_ylabel('Amplitude (relativa à fundamental)')
+ax9.set_title('Triangular ideal na frequência: só harmônicas ímpares, caindo com 1/h²')
+ax9.legend()
+ax9.grid(True)
 
 # Gráfico 8: DNL e INL no estilo das Figs. 26-13 e 26-14 do DS (p. 279): a escada real
 # contra a ideal, com zoom no pior ponto (nossos erros são de fração de LSB e não
