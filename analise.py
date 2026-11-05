@@ -240,24 +240,15 @@ enob = sinad_medida / 6.02
 # (Lathi p. 704 e Exemplo M8.1, p. 724). Resolução: fs/M (Lathi eq. 8.20c, p. 704).
 freq = np.arange(M // 2 + 1) * fs_medida / M
 
-# Mesmo com M em períodos inteiros, sobra uma fração de amostra (o período medido não é
-# inteiro), e isso espalha energia em volta de cada pico (vazamento). Para reduzir, as duas
-# curvas são multiplicadas pela mesma janela de Hann antes da FFT: "O vazamento pode ser
-# reduzido usando uma janela amortecida" (Lathi p. 704; §7.8). Como as duas usam a mesma
-# janela e o gráfico é relativo à fundamental, as alturas das harmônicas não mudam.
-# Só com 2+ períodos: com 1 período as harmônicas ficam em pontos vizinhos da FFT e o
-# alargamento da janela de Hann mistura uma com a outra; aí fica sem janela (retangular).
-janela = np.hanning(M) if n_periodos >= 2 else np.ones(M)
-
 # FFT do primeiro bloco (o mesmo dos gráficos 1 e 2), em M amostras = períodos inteiros.
-X_med = np.abs(np.fft.rfft((dados[:M] - dados[:M].mean()) * janela))
-X_ideal = np.abs(np.fft.rfft((x[:M] - x[:M].mean()) * janela))
+X_med = np.abs(np.fft.rfft(dados[:M] - dados[:M].mean()))
+X_ideal = np.abs(np.fft.rfft(x[:M] - x[:M].mean()))
 
 # Chão teórico da quantização: todo ADC de n bits arredonda com erro de até ½ LSB, que se
 # comporta como um ruído de potência LSB²/12 (Proakis §9.2.3, p. 755-756). Espalhado pela
-# FFT de M pontos com a janela, cada frequência recebe |X|² = (soma da janela²)/12 (em LSB),
-# a mesma escala do medido. É onde um ADC de 8 bits perfeito ficaria entre as harmônicas. [nossa]
-X_quant = np.sqrt(np.sum(janela ** 2) / 12)
+# FFT de M pontos, cada frequência recebe |X|² = M/12 (em LSB), a mesma escala do medido.
+# É onde um ADC de 8 bits perfeito ficaria entre as harmônicas. [nossa]
+X_quant = np.sqrt(M / 12)
 ref = X_ideal.max()             # 0 dB = fundamental da triangular simulada
 
 

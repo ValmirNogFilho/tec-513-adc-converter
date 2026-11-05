@@ -6,7 +6,7 @@ f_tri =75
 
 amp = 5
 offset = 2.5
-amp_margem = 0.07
+amp_margem = 0.045
 offset_margem = 0.05
 
 # Mínimo e máximo da triangular. Com o gerador em HighZ, o valor da tela é a tensão

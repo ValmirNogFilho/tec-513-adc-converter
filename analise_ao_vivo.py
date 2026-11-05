@@ -156,16 +156,13 @@ try:
         # A FFT começa no 1º cruzamento do meio da escala subindo (como o trigger do
         # osciloscópio), e não no começo do bloco: assim todo bloco "começa" no mesmo ponto da
         # onda e a fase fica parada (deslocar no tempo muda a fase: Lathi eq. 8.33, p. 714).
-        # Hann só com 2+ períodos: com 1 período as harmônicas ficam em pontos vizinhos da FFT
-        # e o alargamento da janela mistura uma com a outra.
         i0 = int(round(subidas[0])) if len(subidas) else 0
         n_periodos = max(1, int((tamanho_buffer - i0) // periodo))
         M = int(round(n_periodos * periodo))
         trecho_med, trecho_ide = bloco[i0:i0 + M], x[i0:i0 + M]
         M = len(trecho_med)
-        janela = np.hanning(M) if n_periodos >= 2 else np.ones(M)
-        F_med = np.fft.rfft((trecho_med - trecho_med.mean()) * janela)
-        F_ide = np.fft.rfft((trecho_ide - trecho_ide.mean()) * janela)
+        F_med = np.fft.rfft(trecho_med - trecho_med.mean())
+        F_ide = np.fft.rfft(trecho_ide - trecho_ide.mean())
         ref = np.abs(F_ide).max()
         h = np.arange(1, n_harm + 1)
         h = h[h * n_periodos < len(F_med)]
