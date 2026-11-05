@@ -153,6 +153,21 @@ pontas_ok = contagem[0] > 0 and contagem[-1] > 0
 exatidao_10 = 4 * np.max(np.abs(T - T_ideal)) + 0.5
 
 
+# ---------- 4b. Requisito 2 rampa por rampa ----------
+# EN req. 2: "capturar todos os níveis de quantização durante a subida e a descida". A
+# contagem acima soma todos os blocos (responde se o ADC tem código perdido); aqui cada
+# subida e cada descida é contada sozinha. Uma rampa vai de um vale (o código chega em 0)
+# até o pico seguinte (chega em 255), ou o contrário. [nossa]
+def rampas(bloco):
+    picos = np.where((bloco[1:] == 2**n_bits - 1) & (bloco[:-1] < 2**n_bits - 1))[0] + 1
+    vales = np.where((bloco[1:] == 0) & (bloco[:-1] > 0))[0] + 1
+    ext = sorted([(i, 'p') for i in picos] + [(i, 'v') for i in vales])
+    return [bloco[i:j + 1] for (i, a), (j, d) in zip(ext, ext[1:]) if a != d and j - i > periodo / 4]
+
+
+faltam_rampa = np.array([2**n_bits - len(np.unique(r)) for b in capturas for r in rampas(b)])
+
+
 # ---------- 5. Triangular simulada, alinhada com a medida ----------
 # EN req. 5: "deve-se gerar por simulação o sinal triangular e compará-lo com a saída obtida
 # do conversor A/D". A triangular é gerada com v_min, v_max e o período medido.
@@ -224,8 +239,25 @@ enob = sinad_medida / 6.02
 # inteiro de períodos, para as harmônicas caírem nos pontos da FFT, sem vazamento
 # (Lathi p. 704 e Exemplo M8.1, p. 724). Resolução: fs/M (Lathi eq. 8.20c, p. 704).
 freq = np.arange(M // 2 + 1) * fs_medida / M
-X_med = np.abs(np.fft.rfft(dados[:M] - dados[:M].mean()))
-X_ideal = np.abs(np.fft.rfft(x[:M] - x[:M].mean()))
+
+# Mesmo com M em períodos inteiros, sobra uma fração de amostra (o período medido não é
+# inteiro), e isso espalha energia em volta de cada pico (vazamento). Para reduzir, as duas
+# curvas são multiplicadas pela mesma janela de Hann antes da FFT: "O vazamento pode ser
+# reduzido usando uma janela amortecida" (Lathi p. 704; §7.8). Como as duas usam a mesma
+# janela e o gráfico é relativo à fundamental, as alturas das harmônicas não mudam.
+# Só com 2+ períodos: com 1 período as harmônicas ficam em pontos vizinhos da FFT e o
+# alargamento da janela de Hann mistura uma com a outra; aí fica sem janela (retangular).
+janela = np.hanning(M) if n_periodos >= 2 else np.ones(M)
+
+# FFT do primeiro bloco (o mesmo dos gráficos 1 e 2), em M amostras = períodos inteiros.
+X_med = np.abs(np.fft.rfft((dados[:M] - dados[:M].mean()) * janela))
+X_ideal = np.abs(np.fft.rfft((x[:M] - x[:M].mean()) * janela))
+
+# Chão teórico da quantização: todo ADC de n bits arredonda com erro de até ½ LSB, que se
+# comporta como um ruído de potência LSB²/12 (Proakis §9.2.3, p. 755-756). Espalhado pela
+# FFT de M pontos com a janela, cada frequência recebe |X|² = (soma da janela²)/12 (em LSB),
+# a mesma escala do medido. É onde um ADC de 8 bits perfeito ficaria entre as harmônicas. [nossa]
+X_quant = np.sqrt(np.sum(janela ** 2) / 12)
 ref = X_ideal.max()             # 0 dB = fundamental da triangular simulada
 
 
@@ -258,6 +290,7 @@ linha("INL (maior |valor|)", f"{np.max(np.abs(inl)):.2f}", "0,31 (1,25 LSB10, a 
 linha("Exatidão absoluta", f"{exatidao_10:.2f} LSB10", "3 LSB10 (a 1 MHz)", "DS p. 279; Tab. 31-9")
 linha("Códigos perdidos", str(len(faltando)), "0 esperado (DNL < 1)", "AVR127 §3.4.3")
 linha("Monotônico", "sim" if not nao_monotonicos else "não", "sim esperado", "[nossa] (DS não dá)")
+
 print(f"\n  1ª transição: {T[0]:.2f} LSB (ideal {T_ideal[0]:.3f}) | última: {T[-1]:.2f} LSB (ideal {T_ideal[-1]:.3f})")
 print(f"  DNL: mín {dnl.min():+.2f}, máx {dnl.max():+.2f} | INL: mín {inl.min():+.2f}, máx {inl.max():+.2f}")
 if len(faltando):
@@ -265,6 +298,27 @@ if len(faltando):
 if nao_monotonicos:
     print(f"  Códigos fora de ordem: {nao_monotonicos}")
 print("  Atenção: a Tab. 31-9 mede offset/ganho/DNL/INL a 200 kHz e Vref = 4 V; nós usamos 1 MHz.")
+
+print("\n=== Requisito 2: níveis capturados em cada subida/descida (sem somar) ===")
+if len(faltam_rampa) == 0:
+    print("  Não achei rampas completas: o sinal precisa chegar no código 0 e no 255.")
+else:
+    print(f"  Rampas analisadas: {len(faltam_rampa)} | códigos faltando por rampa: média {faltam_rampa.mean():.1f}, "
+          f"mín {faltam_rampa.min()}, máx {faltam_rampa.max()} | rampas com os 256: {np.sum(faltam_rampa == 0)}")
+    print(f"  Amostras por nível: {periodo / 2 / ((v_max - v_min) / q):.2f} "
+          f"(com folga de 2x, f_tri <= {fs_medida / 2**(n_bits + 2):.0f} Hz)")
+
+# Altura de cada harmônica nas duas curvas do gráfico 4. Como M tem n_periodos períodos, a
+# harmônica h cai no ponto h x n_periodos da FFT. Teoria da triangular: só ímpares, caindo
+# com 1/h² (Lathi Ex. 6.2, p. 538). [nossa]
+print("\n=== Comparação na frequência: altura das harmônicas (dB em relação à fundamental) ===")
+linha("Harmônica", "Medido", "Triangular simulada", "Teoria (1/h², só ímpares)")
+for h in range(1, 11):
+    k = h * n_periodos
+    teoria = f"{20 * np.log10(1 / h**2):.1f} dB" if h % 2 else "não existe"
+    linha(f"{h}ª ({h * f_tri:.0f} Hz)", f"{20 * np.log10(X_med[k] / ref):.1f} dB",
+          f"{20 * np.log10(X_ideal[k] / ref + 1e-12):.1f} dB", teoria)
+print(f"  Chão teórico da quantização (8 bits): {20 * np.log10(X_quant / ref):.1f} dB")
 
 
 # ---------- 10. Gráficos ----------
@@ -280,7 +334,14 @@ a1.set_ylabel('Tensão (V)')
 a1.set_title('Comparação no tempo')
 a1.legend()
 a1.grid(True)
-a2.plot(t[:fim], dados[:fim] - x[:fim], linewidth=0.8)   # Degrau constante = offset; inclinação = ganho
+erro_t = dados[:fim] - x[:fim]
+a2.plot(t[:fim], erro_t, linewidth=0.8, label='Erro de cada amostra (inclui o arredondamento)')
+# Média móvel de ~5% do período: some o vaivém do arredondamento e fica a tendência.
+# Degrau constante = offset; subir e descer junto com a onda = ganho. [nossa]
+janela_mm = max(5, int(periodo / 20))
+a2.plot(t[:fim], np.convolve(erro_t, np.ones(janela_mm) / janela_mm, mode='same'), 'r', linewidth=2,
+        label='Média móvel (tendência)')
+a2.legend(loc='upper right', fontsize=8)
 a2.set_xlabel('Tempo (ms)')
 a2.set_ylabel('Medido - simulado (LSB)')
 a2.grid(True)
@@ -356,18 +417,102 @@ c4.legend()
 c4.grid(True)
 fig5.tight_layout()
 
-# Gráfico 4: comparação na frequência. A triangular ideal tem só harmônicas ímpares, que
-# caem com 1/n² (Lathi Ex. 6.2, p. 538); harmônicas pares ou extras no medido indicam
-# não linearidade (AVR127 §4.2). O "chão" do medido é o ruído (o mesmo da SINAD).
-fig4, ax = plt.subplots(figsize=(10, 5), num='4 - Comparação na frequência')
-ax.plot(freq, 20 * np.log10(X_med / ref + 1e-12), label='Medido')
-ax.plot(freq, 20 * np.log10(X_ideal / ref + 1e-12), 'r--', label='Triangular simulada')
-ax.set_xlim(0, min(fs_medida / 2, 40 * f_tri))
-ax.set_ylim(-100, 5)
-ax.set_xlabel('Frequência (Hz)')
-ax.set_ylabel('Magnitude (dB, relativa à fundamental)')
-ax.set_title('Comparação na frequência')
-ax.legend()
-ax.grid(True)
+# Gráfico 6: requisito 2 rampa por rampa. Cada barra é uma subida ou descida; a altura é
+# quantos códigos ela pulou. Para cumprir o requisito, todas teriam que ficar em 0.
+if len(faltam_rampa) > 0:
+    fig6, ax6 = plt.subplots(figsize=(10, 4), num='6 - Níveis por rampa (req. 2)')
+    ax6.bar(np.arange(len(faltam_rampa)), faltam_rampa, width=1.0)
+    ax6.axhline(faltam_rampa.mean(), color='r', linestyle='--', linewidth=1, label=f'Média: {faltam_rampa.mean():.1f}')
+    ax6.set_xlabel('Rampa (subida ou descida, na ordem da captura)')
+    ax6.set_ylabel('Códigos que faltaram')
+    ax6.set_title(f'Requisito 2: códigos pulados em cada rampa ({np.sum(faltam_rampa == 0)} de {len(faltam_rampa)} rampas completas)')
+    ax6.legend()
+    ax6.grid(True)
+
+# Gráfico 4: comparação na frequência, nas duas escalas. A triangular ideal tem só
+# harmônicas ímpares, com amplitude 1/n² (Lathi Ex. 6.2, p. 538): 1, 1/9, 1/25, 1/49...
+# Em cima (linear): mostra que o medido bate com a ideal nas harmônicas.
+# Embaixo (dB): amplia o que é pequeno; aparecem o chão de ruído e as harmônicas pares,
+# que indicam não linearidade (AVR127 §4.2). O chão é o mesmo "lixo" da SINAD.
+fig4, (d1, d2) = plt.subplots(2, 1, figsize=(10, 8), num='4 - Comparação na frequência')
+d1.plot(freq, X_med / ref, label='Medido')
+d1.plot(freq, X_ideal / ref, 'r--', label='Triangular simulada')
+d1.set_xlim(0, 12 * f_tri)     # Até a 11ª harmônica; depois disso ficam abaixo de 1%
+d1.set_ylim(0, 1.05)
+d1.set_ylabel('Amplitude (relativa à fundamental)')
+d1.set_title('Comparação na frequência: escala linear')
+d1.legend()
+d1.grid(True)
+
+d2.plot(freq, 20 * np.log10(X_med / ref + 1e-12), label='Medido')
+d2.axhline(20 * np.log10(X_quant / ref), color='gray', linestyle=':', linewidth=1.5, label='Chão teórico da quantização (8 bits)')
+d2.plot(freq, 20 * np.log10(X_ideal / ref + 1e-12), 'r--', label='Triangular simulada')
+d2.set_xlim(0, min(fs_medida / 2, 40 * f_tri))
+d2.set_ylim(-100, 5)
+d2.set_xlabel('Frequência (Hz)')
+d2.set_ylabel('Magnitude (dB, relativa à fundamental)')
+d2.set_title('Escala em dB (amplia o que é pequeno)')
+d2.legend()
+d2.grid(True)
+fig4.tight_layout()
+
+# Gráfico 7: espectro discreto, só nas harmônicas (o "espectro de linhas" da série de
+# Fourier, Lathi Ex. 6.2, p. 538). Como M tem n_periodos períodos, a harmônica h cai no
+# ponto h x n_periodos da FFT. Haste azul = medido; x vermelho = triangular simulada.
+# Ímpares: as duas têm que bater. Pares: a ideal não tem (fica no fundo do gráfico).
+n_harm = 20
+h = np.arange(1, n_harm + 1)
+k_h = h * n_periodos
+med_lin = X_med[k_h] / ref
+ide_lin = X_ideal[k_h] / ref
+
+fig7, ax7 = plt.subplots(figsize=(10, 5), num='7 - Espectro discreto (harmônicas)')
+ax7.stem(h * f_tri, med_lin, basefmt=' ', label='Medido')
+ax7.plot(h * f_tri, ide_lin, 'rx', markersize=9, mew=2, label='Triangular simulada')
+ax7.axhline(X_quant / ref, color='gray', linestyle=':', linewidth=1.5, label='Chão teórico da quantização (8 bits)')
+ax7.set_xticks(h * f_tri)
+ax7.set_xticklabels([f'{v}f' for v in h], fontsize=8)
+ax7.set_ylim(0, 1.05)
+ax7.set_xlabel(f'Harmônica (f = {f_tri:g} Hz)')
+ax7.set_ylabel('Amplitude (relativa à fundamental)')
+ax7.set_title('Espectro discreto: altura de cada harmônica')
+ax7.legend()
+ax7.grid(True)
+
+# Gráfico 8: DNL e INL no estilo das Figs. 26-13 e 26-14 do DS (p. 279): a escada real
+# contra a ideal, com zoom no pior ponto (nossos erros são de fração de LSB e não
+# apareceriam na escada inteira). Como o DS manda (p. 278), a escada real é corrigida de
+# offset e ganho: a 1ª transição vai para a posição ideal e o LSB real vira 1. [nossa]
+T_corr = T_ideal[0] + (T - T[0]) / lsb_real
+fig8, (e1, e2) = plt.subplots(1, 2, figsize=(13, 5), num='8 - DNL e INL no estilo do datasheet')
+
+k_inl = int(np.argmax(np.abs(inl)))          # índice da transição de maior |INL| (código k_inl+1)
+e1.step(np.r_[0, T_corr, 2**n_bits], degrau_y, where='post', label='Real (sem offset e ganho)')
+e1.step(np.r_[0, T_ideal, 2**n_bits], degrau_y, 'r--', where='post', label='Ideal')
+e1.annotate('', xy=(T_corr[k_inl], k_inl + 0.5), xytext=(T_ideal[k_inl], k_inl + 0.5),
+            arrowprops=dict(arrowstyle='<->', color='k'))
+e1.text((T_corr[k_inl] + T_ideal[k_inl]) / 2, k_inl + 0.7, f'INL = {inl[k_inl]:+.2f} LSB', ha='center')
+e1.set_xlim(T_ideal[k_inl] - 4, T_ideal[k_inl] + 4)
+e1.set_ylim(k_inl - 4, k_inl + 5)
+e1.set_title(f'INL (Fig. 26-13): maior desvio, na transição para o código {k_inl + 1}')
+e1.set_xlabel('Tensão de entrada (LSB)')
+e1.set_ylabel('Código')
+e1.legend(loc='upper left')
+e1.grid(True)
+
+j = int(np.argmax(np.abs(dnl)))              # degrau de maior |DNL| (código j+1, entre T[j] e T[j+1])
+e2.step(np.r_[0, T_corr, 2**n_bits], degrau_y, where='post', label='Real (sem offset e ganho)')
+e2.step(np.r_[0, T_ideal, 2**n_bits], degrau_y, 'r--', where='post', label='Ideal')
+e2.annotate('', xy=(T_corr[j + 1], j + 1.15), xytext=(T_corr[j], j + 1.15), arrowprops=dict(arrowstyle='<->', color='C0'))
+e2.text((T_corr[j] + T_corr[j + 1]) / 2, j + 1.3, f'real: {1 + dnl[j]:.2f} LSB', ha='center', color='C0')
+e2.annotate('', xy=(T_ideal[j + 1], j + 0.85), xytext=(T_ideal[j], j + 0.85), arrowprops=dict(arrowstyle='<->', color='r'))
+e2.text((T_ideal[j] + T_ideal[j + 1]) / 2, j + 0.55, 'ideal: 1 LSB', ha='center', color='r')
+e2.set_xlim(T_ideal[j] - 3, T_ideal[j] + 4)
+e2.set_ylim(j - 3, j + 5)
+e2.set_title(f'DNL (Fig. 26-14): degrau do código {j + 1}, DNL = {dnl[j]:+.2f} LSB')
+e2.set_xlabel('Tensão de entrada (LSB)')
+e2.legend(loc='upper left')
+e2.grid(True)
+fig8.tight_layout()
 
 plt.show()

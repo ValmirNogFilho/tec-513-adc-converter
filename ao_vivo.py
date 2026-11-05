@@ -28,6 +28,18 @@ def instantes(bloco, subida):
     return np.array(t, dtype=float)
 
 
+def pior_rampa(bloco):
+    # Requisito 2: quantos códigos aparecem na subida/descida mais pobre do bloco (igual à
+    # seção 4b do analise.py). Uma rampa vai de um vale (código 0) ao pico seguinte (255).
+    bloco = np.asarray(bloco).astype(int)
+    picos = np.where((bloco[1:] == 2**n_bits - 1) & (bloco[:-1] < 2**n_bits - 1))[0] + 1
+    vales = np.where((bloco[1:] == 0) & (bloco[:-1] > 0))[0] + 1
+    ext = sorted([(i, 'p') for i in picos] + [(i, 'v') for i in vales])
+    minimo = fs_nominal / f_tri / 4
+    contagens = [len(np.unique(bloco[i:j + 1])) for (i, a), (j, d) in zip(ext, ext[1:]) if a != d and j - i > minimo]
+    return min(contagens) if contagens else None
+
+
 def resumo(capturas):
     capturas = np.asarray(capturas).astype(int)
     B, N = capturas.shape

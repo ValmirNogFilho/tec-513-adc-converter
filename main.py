@@ -3,7 +3,7 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
-porta_serial = 'COM5'  # Ajuste para a sua porta
+porta_serial = 'COM3'  # Ajuste para a sua porta
 baud_rate = 115200
 tamanho_buffer = 4096
 
@@ -13,7 +13,7 @@ tamanho_janela = 1024  # Quantidade de pontos que vai aparecer na tela
 margem_busca = tamanho_buffer - tamanho_janela  
 
 from config import f_tri, fs_nominal as fs   # Frequência do gerador e fs: mudar só no config.py
-from ao_vivo import resumo                     # Erros calculados durante a captura
+from ao_vivo import resumo, pior_rampa         # Erros calculados durante a captura
 
 print("Conectando à porta e aguardando inicialização do Arduino...")
 ser = serial.Serial(porta_serial, baud_rate, timeout=3)
@@ -61,8 +61,10 @@ try:
         capturas.append(dados)
         np.save(f'captura_{f_tri:g}Hz.npy', np.array(capturas[-50:]))
 
-        # Requisito 2 ao vivo: quantos dos 256 códigos apareceram neste bloco
-        ax.set_title(f'Osciloscópio | f_tri = {f_tri:g} Hz | este bloco: {len(np.unique(dados))}/256 códigos')
+        # Requisito 2 ao vivo: códigos no bloco inteiro e na subida/descida mais pobre do bloco
+        pior = pior_rampa(dados)
+        texto_rampa = f'{pior}/256' if pior is not None else 'sem rampa completa'
+        ax.set_title(f'Osciloscópio | f_tri = {f_tri:g} Hz | bloco: {len(np.unique(dados))}/256 | pior rampa: {texto_rampa}')
 
         # A cada 10 blocos, os erros estáticos somando os blocos até agora
         if len(capturas) % 10 == 0:
