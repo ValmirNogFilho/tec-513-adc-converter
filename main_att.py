@@ -7,25 +7,22 @@ porta_serial = 'COM3'  # Ajuste para a sua porta
 baud_rate = 115200
 tamanho_buffer = 4096
 
-tamanho_janela = 1024  # Quantidade de pontos que vai aparecer na tela
-# O trigger procura o começo da janela só onde ainda cabe a janela inteira depois dele
-margem_busca = tamanho_buffer - tamanho_janela
+tamanho_janela = 1024                           # pontos mostrados na tela
+margem_busca = tamanho_buffer - tamanho_janela  # o gatilho só vale onde cabe a janela inteira
 
-from config import f_tri, fs_nominal as fs        # Frequência do gerador e fs: mudar só no config.py
-from ao_vivo import resumo, pior_rampa, instantes  # Erros e cruzamentos do meio da escala
+from config import f_tri, fs_nominal as fs
+from ao_vivo import resumo, pior_rampa, instantes
 
 print("Conectando à porta e aguardando inicialização do Arduino...")
 ser = serial.Serial(porta_serial, baud_rate, timeout=3)
 time.sleep(3)
 ser.reset_input_buffer()
 
-# Configura o gráfico
 plt.ion()
 fig, ax = plt.subplots(figsize=(10, 5))
 linha, = ax.plot(np.zeros(tamanho_janela), color='blue', linewidth=1.5, label='Arduino')
 
-# Triangular ideal começando no meio da escala subindo, igual ao ponto do trigger.
-# Fase 0.25 = um quarto de período depois do vale, onde a triangular passa por 127,5 subindo.
+# Triangular ideal começando no meio da escala subindo (fase 0,25), igual ao gatilho
 n = np.arange(tamanho_janela)
 
 
@@ -37,7 +34,7 @@ linha_ideal, = ax.plot(n, triangular_ideal(fs / f_tri), color='red', linestyle='
 ax.legend(loc='upper right')
 
 ax.set_ylim(-0.2, 256)
-ax.set_xlim(0, tamanho_janela)  # Trava o eixo X no tamanho da janela
+ax.set_xlim(0, tamanho_janela)
 ax.set_xlabel(f'Amostras (0 a {tamanho_janela-1})')
 ax.set_ylabel('Código (0 a 255)')
 ax.set_title('Osciloscópio - Modo Auto (gatilho no meio da escala, subindo)')
@@ -61,43 +58,30 @@ try:
 
         dados = np.frombuffer(dados_brutos, dtype=np.uint8)
 
-        # Salva os últimos 50 blocos recebidos para o analise.py
+        # Salva os últimos 50 blocos para o analise.py
         capturas.append(dados)
         np.save(f'captura_{f_tri:g}Hz.npy', np.array(capturas[-50:]))
 
-        # Requisito 2 ao vivo: códigos no bloco inteiro e na subida/descida mais pobre do bloco
+        # Requisito 2: códigos no bloco e na pior subida/descida
         pior = pior_rampa(dados)
         texto_rampa = f'{pior}/256' if pior is not None else 'sem rampa completa'
         ax.set_title(f'Osciloscópio | f_tri = {f_tri:g} Hz | bloco: {len(np.unique(dados))}/256 | pior rampa: {texto_rampa}')
 
-        # A cada 10 blocos, os erros estáticos somando os blocos até agora
+        # A cada 10 blocos, erros estáticos dos blocos recebidos
         if len(capturas) % 10 == 0:
             print(f"recebidos {len(capturas)} | usando os últimos " + resumo(capturas[-50:]))
 
-        # --- LÓGICA DO TRIGGER (MODO AUTO) ---
-        # Como num osciloscópio: começa a janela onde a onda cruza o meio da escala (128)
-        # subindo. O instantes() só aceita o cruzamento se a onda estiver subindo de verdade,
-        # então o ruído perto do 128 não engana. O meio é cruzado em qualquer frequência,
-        # mesmo que a onda não chegue no 0 (o trigger no vale falhava nesses casos).
+        # Gatilho: 1º cruzamento do meio da escala (128) subindo; sem cruzamento, começa no 0
         subidas = instantes(dados, True)
         cabem = subidas[subidas < margem_busca]
+        indice_trigger = int(round(cabem[0])) if len(cabem) > 0 else 0
 
-        if len(cabem) > 0:
-            indice_trigger = int(round(cabem[0]))
-        else:
-            # MODO AUTO: Não encontrou o cruzamento (pode ser uma linha reta ou sinal muito fraco)
-            # Desenha a partir do zero de qualquer forma para a tela não congelar
-            indice_trigger = 0
-
-        # A ideal usa o período medido neste bloco (distância entre duas subidas), então
-        # acompanha o gerador mesmo que a frequência mude sem mexer no config.py
+        # Ideal com o período medido no bloco (distância entre duas subidas)
         if len(subidas) >= 2:
             linha_ideal.set_ydata(triangular_ideal(np.mean(np.diff(subidas))))
 
-        # Corta a janela exata de dados contínuos a partir do trigger
         dados_janela = dados[indice_trigger : indice_trigger + tamanho_janela]
 
-        # Atualiza o gráfico
         linha.set_ydata(dados_janela)
         plt.draw()
         plt.pause(0.01)
