@@ -1,6 +1,6 @@
 # analise.py - Requisitos 2, 5 e 6 do Problema 2 (erros estáticos e características dinâmicas)
 #
-# Uso: rodar o main_att.py (salva captura_<f_tri>Hz.npy), conferir o config.py e rodar este script.
+# Uso: rodar o main.py (salva captura_<f_tri>Hz.npy), conferir o config.py e rodar este script.
 
 import numpy as np
 import matplotlib.pyplot as plt
